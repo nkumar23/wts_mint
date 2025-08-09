@@ -1,4 +1,4 @@
-# NFT Minting Usage Guide
+# NFT Minting CLI Usage Guide
 
 ## ✅ Quick Start
 

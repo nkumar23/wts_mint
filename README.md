@@ -1,6 +1,6 @@
-# WTS Mint NFT
+# WTS Mint NFT - CLI Tool
 
-A Node.js script that watches a designated "inbox" directory for new subfolders and automatically mints NFTs on Solana using Metaplex Umi.
+A Node.js CLI tool that watches a designated "inbox" directory for new subfolders and automatically mints NFTs on Solana using Metaplex Umi.
 
 ## Features
 
@@ -44,63 +44,17 @@ solana airdrop 2 --keypair wallet.json --url devnet
 
 ## Usage
 
-### Integrated CLI + Web Mode (Recommended)
-
-**Step 1: Start the API server**
-```bash
-npm run server
-```
-
-**Step 2: Start the web interface** (in another terminal)
-```bash
-npm run install-web  # First time only
-npm run web
-```
-
-**Step 3: Start the CLI** (in another terminal)
+Start the NFT minter:
 ```bash
 npm start
 ```
 
-**New CLI Flow:**
-1. **Web Dashboard Prompt**: Option to wait for browser wallet connection
-2. **Browser Wallet Integration**: Connect Phantom/Solflare via web dashboard
-3. **Wallet Configuration**: Uses web wallet for monitoring, server wallet for signing
-4. **Folder Watching**: Automated processing with web dashboard monitoring
-
-### CLI-Only Mode
-```bash
-npm start
-```
-
-Traditional flow:
-1. Initialize wallet (interactive prompt on first run)
+**CLI Flow:**
+1. Initialize wallet (interactive multi-wallet selection on first run)
 2. Display wallet address and balance  
 3. Ask for confirmation to continue
 4. Create `inbox/` and `processed/` directories
-5. Watch folders and mint NFTs
-
-### Web Interface Mode
-Start the API server:
-```bash
-npm run server
-```
-
-Start the web interface:
-```bash
-npm run install-web  # First time only
-npm run web
-```
-
-Access the web dashboard at: http://localhost:3000
-
-**Web Features:**
-- 🔌 **Browser Wallet Connection** (Phantom, Solflare, etc.)
-- 📊 **Real-time Dashboard** with server status and statistics  
-- 📤 **Manual NFT Upload** with drag-and-drop interface
-- 🎯 **Live Activity Feed** showing real-time minting progress
-- ▶️ **Start/Stop Folder Watcher** remotely
-- 📋 **NFT History** with explorer links
+5. Watch folders and mint NFTs automatically
 
 ### Wallet Setup Flow
 On first run without `KEYPAIR_PATH` set:
@@ -145,31 +99,29 @@ Each folder in `inbox/` should contain:
 ## Configuration
 
 Environment variables:
-- `RPC_URL`: Solana RPC endpoint (default: mainnet)
-- `KEYPAIR_PATH`: Path to keypair file
-- `BUNDLR_ADDRESS`: Bundlr network address
+- `NETWORK`: Solana network (mainnet-beta or devnet, default: devnet)
+- `HELIUS_API_KEY`: Helius API key for improved RPC reliability
+- `RPC_URL`: Custom Solana RPC endpoint (optional)
+- `KEYPAIR_PATH`: Path to keypair file (optional)
+- `BUNDLR_ADDRESS`: Bundlr network address (optional)
 
-Web interface environment variables (create `web/.env.local`):
-- `REACT_APP_API_URL`: API server URL (default: http://localhost:3001)
-- `REACT_APP_SOLANA_NETWORK`: Solana network (mainnet-beta or devnet)
-- `REACT_APP_RPC_URL`: Custom RPC URL for web interface
+## Switching Networks
 
-## Switching to Devnet
-
-To use devnet for testing (recommended for development):
-
-1. **Set environment variable:**
+**To use devnet for testing:**
 ```bash
-RPC_URL=https://api.devnet.solana.com npm start
+# Set in .env file
+NETWORK=devnet
+HELIUS_API_KEY=your-helius-key  # Optional but recommended
 ```
 
-2. **Or create .env file:**
+**To use mainnet:**
 ```bash
-cp .env.example .env
-# Edit .env and change RPC_URL to devnet
+# Set in .env file  
+NETWORK=mainnet-beta
+HELIUS_API_KEY=your-helius-key  # Optional but recommended
 ```
 
-3. **Fund devnet wallet:**
+**Fund devnet wallet:**
 ```bash
 solana airdrop 2 --keypair wallet.json --url devnet
 ```

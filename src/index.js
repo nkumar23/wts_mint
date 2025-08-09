@@ -5,7 +5,7 @@ import { NFTMinter } from './nft-minter.js';
 dotenv.config();
 
 async function main() {
-  console.log('🚀 WTS Mint NFT - CLI Mode');
+  console.log('🚀 WTS Mint NFT - CLI Tool');
   
   // Determine network and RPC URL
   const network = process.env.NETWORK || 'devnet';
@@ -31,36 +31,12 @@ async function main() {
     bundlrAddress: process.env.BUNDLR_ADDRESS || (network === 'mainnet-beta' 
       ? 'https://node1.bundlr.network' 
       : 'https://devnet.bundlr.network'),
-    apiUrl: process.env.API_URL || 'http://localhost:3001',
     walletsDir: './wallets'
   });
 
   try {
-    // First, ask about web dashboard integration
-    const useWebWallet = await minter.promptForWebDashboard();
-    
-    let webWallet = null;
-    if (useWebWallet) {
-      webWallet = await minter.waitForWebWallet();
-      
-      if (webWallet) {
-        console.log(`\n🔌 Using web wallet: ${webWallet.walletName}`);
-        console.log(`   📊 Monitor activity at: http://localhost:3000`);
-        
-        // Override keypair path to skip file wallet setup
-        minter.keypairPath = null;  // This will be handled differently for web wallet mode
-        minter.webWallet = webWallet;
-      } else {
-        console.log('\n📁 Falling back to file wallet setup...');
-      }
-    }
-
-    // Initialize with appropriate wallet method
-    if (webWallet) {
-      await minter.initializeWithWebWallet(webWallet);
-    } else {
-      await minter.initialize();
-    }
+    // Initialize the minter
+    await minter.initialize();
     
     const shouldContinue = await minter.promptToContinue();
     
@@ -73,9 +49,6 @@ async function main() {
     await minter.startWatching();
     
     console.log('🎉 NFT Minter is running! Drop folders into ./inbox to mint NFTs');
-    if (webWallet) {
-      console.log('📊 Web dashboard: http://localhost:3000');
-    }
     console.log('Press Ctrl+C to stop');
     
   } catch (error) {

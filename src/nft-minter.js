@@ -7,7 +7,6 @@ import { bundlrUploader } from '@metaplex-foundation/umi-uploader-bundlr';
 import { createNft, mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
 import { generateSigner, keypairIdentity, percentAmount, lamports } from '@metaplex-foundation/umi';
 import mime from 'mime-types';
-import axios from 'axios';
 import { WalletManager } from '../wallet-manager.js';
 
 export class NFTMinter {
@@ -18,9 +17,6 @@ export class NFTMinter {
     this.heliusApiKey = options.heliusApiKey;
     this.keypairPath = options.keypairPath;
     this.bundlrAddress = options.bundlrAddress || 'https://devnet.bundlr.network';
-    this.eventEmitter = options.eventEmitter; // For web interface events
-    this.isAPIMode = options.eventEmitter ? true : false;
-    this.apiUrl = options.apiUrl || 'http://localhost:3001';
     this.walletManager = new WalletManager(options.walletsDir);
     
     // Use Helius RPC if API key provided
@@ -54,119 +50,36 @@ export class NFTMinter {
 
     await this.loadOrCreateKeypair();
     await fs.mkdir(this.processedPath, { recursive: true });
-    
-    if (!this.isAPIMode) {
-      await this.displayWalletInfo();
-    }
-    
+    await this.displayWalletInfo();
     console.log('✅ NFT Minter initialized');
   }
 
-  async initializeWithWebWallet(webWallet) {
-    console.log('🚀 Initializing NFT Minter with Web Wallet...');
-    
-    this.umi = createUmi(this.rpcUrl);
-    this.umi.use(mplTokenMetadata());
-    this.umi.use(bundlrUploader({ address: this.bundlrAddress }));
 
-    // For now, we still need a keypair for signing transactions
-    // The web wallet is used for display and monitoring, but server wallet signs
-    console.log('⚠️  Note: Web wallet is for monitoring. Server will use file wallet for signing.');
-    
-    const defaultKeypairPath = './wallet.json';
-    const keypairPath = this.keypairPath || defaultKeypairPath;
-
-    try {
-      const keypairData = await fs.readFile(keypairPath);
-      const keypairArray = JSON.parse(keypairData.toString());
-      
-      if (!Array.isArray(keypairArray) || keypairArray.length !== 64) {
-        throw new Error('Invalid keypair format - expected array of 64 bytes');
-      }
-      
-      const secretKey = new Uint8Array(keypairArray);
-      const keypair = this.umi.eddsa.createKeypairFromSecretKey(secretKey);
-      
-      this.umi.use(keypairIdentity(keypair));
-      console.log(`✅ Using server wallet for signing: ${keypairPath}`);
-    } catch (error) {
-      console.log(`🔑 Creating server wallet for signing: ${keypairPath} (${error.message})`);
-      const signer = generateSigner(this.umi);
-      this.umi.use(keypairIdentity(signer));
-      
-      const keypairArray = Array.from(signer.secretKey);
-      await fs.writeFile(keypairPath, JSON.stringify(keypairArray, null, 2));
-      console.log('✅ Server wallet created and saved');
-    }
-
-    await fs.mkdir(this.processedPath, { recursive: true });
-    
-    // Display both wallet info
-    console.log('\n💼 Wallet Configuration:');
-    console.log(`   🌐 Web Wallet: ${webWallet.walletName} (${webWallet.publicKey})`);
-    
-    const serverWallet = this.umi.identity.publicKey;
-    console.log(`   🖥️  Server Wallet: ${serverWallet} (for signing)`);
-    
-    try {
-      const account = await this.umi.rpc.getAccount(serverWallet);
-      const balanceSOL = account.exists ? Number(account.lamports) / 1e9 : 0;
-      console.log(`   💰 Server Balance: ${balanceSOL.toFixed(4)} SOL`);
-      
-      if (balanceSOL < 0.01) {
-        console.log('   ⚠️  Low server wallet balance! Fund the server wallet to mint NFTs.');
-      }
-    } catch (error) {
-      console.log('   ❌ Could not fetch server wallet balance');
-    }
-    
-    this.webWallet = webWallet;
-    console.log('✅ NFT Minter initialized with Web Wallet integration');
-  }
-
-  // Separate initialization for API mode (no prompts)
-  async initializeForAPI() {
-    console.log('🚀 Initializing NFT Minter (API Mode)...');
-    
-    this.umi = createUmi(this.rpcUrl);
-    this.umi.use(mplTokenMetadata());
-    this.umi.use(bundlrUploader({ address: this.bundlrAddress }));
-
-    const defaultKeypairPath = './wallet.json';
-    const keypairPath = this.keypairPath || defaultKeypairPath;
-
-    try {
-      const keypairData = await fs.readFile(keypairPath);
-      const keypairArray = JSON.parse(keypairData.toString());
-      
-      if (!Array.isArray(keypairArray) || keypairArray.length !== 64) {
-        throw new Error('Invalid keypair format - expected array of 64 bytes');
-      }
-      
-      const secretKey = new Uint8Array(keypairArray);
-      const keypair = this.umi.eddsa.createKeypairFromSecretKey(secretKey);
-      
-      this.umi.use(keypairIdentity(keypair));
-      console.log(`✅ Loaded existing wallet: ${keypairPath}`);
-    } catch (error) {
-      console.log(`🔑 Creating new wallet: ${keypairPath} (${error.message})`);
-      const signer = generateSigner(this.umi);
-      this.umi.use(keypairIdentity(signer));
-      
-      const keypairArray = Array.from(signer.secretKey);
-      await fs.writeFile(keypairPath, JSON.stringify(keypairArray, null, 2));
-      console.log('✅ Wallet saved for future sessions');
-    }
-
-    await fs.mkdir(this.processedPath, { recursive: true });
-    console.log('✅ NFT Minter initialized (API Mode)');
-  }
 
   async loadOrCreateKeypair() {
     const defaultKeypairPath = './wallet.json';
     let keypairPath = this.keypairPath || defaultKeypairPath;
 
-    if (!this.keypairPath && !(await this.fileExists(defaultKeypairPath))) {
+    // Initialize UMI early if needed for wallet operations
+    if (!this.umi) {
+      this.umi = createUmi(this.rpcUrl);
+    }
+
+    if (!this.keypairPath && (await this.fileExists(defaultKeypairPath))) {
+      // Default wallet exists, show its public key and ask if user wants to use it
+      try {
+        const publicKey = await this.getWalletPublicKey(defaultKeypairPath);
+        const useExisting = await this.promptUseExistingWallet(publicKey, defaultKeypairPath);
+        
+        if (!useExisting) {
+          keypairPath = await this.promptForWallet();
+        }
+      } catch (error) {
+        console.log(`⚠️  Error reading default wallet (${error.message})`);
+        console.log('Creating new wallet...');
+        keypairPath = await this.promptForWallet();
+      }
+    } else if (!this.keypairPath && !(await this.fileExists(defaultKeypairPath))) {
       keypairPath = await this.promptForWallet();
     }
 
@@ -209,6 +122,68 @@ export class NFTMinter {
     }
   }
 
+  async getWalletPublicKey(walletPath) {
+    const keypairData = await fs.readFile(walletPath);
+    const keypairArray = JSON.parse(keypairData.toString());
+    
+    if (!Array.isArray(keypairArray) || keypairArray.length !== 64) {
+      throw new Error('Invalid keypair format - expected array of 64 bytes');
+    }
+    
+    // Create temporary UMI instance if not initialized yet
+    const umi = this.umi || createUmi(this.rpcUrl);
+    
+    const secretKey = new Uint8Array(keypairArray);
+    const keypair = umi.eddsa.createKeypairFromSecretKey(secretKey);
+    return keypair.publicKey.toString();
+  }
+
+  async promptUseExistingWallet(publicKey, walletPath) {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    console.log(`\n🔑 Found existing wallet: ${publicKey}`);
+    
+    // Get balance for this wallet
+    try {
+      // Temporarily set up UMI with this keypair to get balance
+      const tempUmi = createUmi(this.rpcUrl);
+      const keypairData = await fs.readFile(walletPath);
+      const keypairArray = JSON.parse(keypairData.toString());
+      const secretKey = new Uint8Array(keypairArray);
+      const keypair = tempUmi.eddsa.createKeypairFromSecretKey(secretKey);
+      
+      console.log('   📊 Fetching wallet balance...');
+      const balance = await this.getWalletBalanceForAddress(tempUmi, keypair.publicKey);
+      
+      if (balance.error) {
+        console.log(`   💰 Balance: Unable to fetch (${balance.error})`);
+      } else {
+        console.log(`   💰 Balance: ${balance.sol.toFixed(4)} SOL`);
+        
+        if (balance.sol < 0.01) {
+          console.log('   ⚠️  Low balance detected - you may need to fund this wallet');
+        }
+      }
+    } catch (error) {
+      console.log('   ⚠️  Could not fetch balance for this wallet');
+    }
+    
+    console.log('\n   Options:');
+    console.log('   - "use" (or press Enter) to use this wallet');
+    console.log('   - "new" to create/select a different wallet');
+    
+    return new Promise((resolve) => {
+      rl.question('\n   Your choice (use/new): ', (answer) => {
+        const useExisting = answer.toLowerCase() === 'use' || answer.toLowerCase() === 'u' || answer.toLowerCase() === '' || answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+        rl.close();
+        resolve(useExisting);
+      });
+    });
+  }
+
   async promptForWallet() {
     // Use the new WalletManager for wallet selection
     return await this.walletManager.promptWalletSelection();
@@ -237,6 +212,60 @@ export class NFTMinter {
     } catch (error) {
       console.log('❌ Wallet address error:', error.message);
       console.log('   The wallet keypair might be corrupted. Try deleting wallet.json to regenerate.');
+    }
+  }
+
+  async getWalletBalanceForAddress(umi, walletAddress, retries = 2) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const account = await umi.rpc.getAccount(walletAddress);
+        
+        if (account.exists) {
+          let lamports = account.lamports;
+          
+          // Handle different lamport formats from different RPC providers
+          if (typeof lamports === 'object' && lamports.basisPoints !== undefined) {
+            // UMI format: { basisPoints: BigInt, identifier: 'SOL', decimals: 9 }
+            lamports = Number(lamports.basisPoints);
+          } else if (typeof lamports === 'object' && lamports.value !== undefined) {
+            lamports = lamports.value;
+          } else if (typeof lamports === 'object' && lamports.amount !== undefined) {
+            lamports = lamports.amount;
+          }
+          
+          if (typeof lamports === 'string') {
+            lamports = Number(lamports);
+          }
+          if (typeof lamports === 'bigint') {
+            lamports = Number(lamports);
+          }
+          
+          const sol = Number(lamports) / 1e9;
+          
+          // Validate the balance is a proper number
+          if (isNaN(sol) || !isFinite(sol)) {
+            const lamportsStr = typeof account.lamports === 'bigint' 
+              ? account.lamports.toString() 
+              : JSON.stringify(account.lamports);
+            throw new Error(`Invalid balance received: ${lamportsStr} lamports`);
+          }
+          
+          return { sol, lamports: Number(lamports), error: null };
+        } else {
+          return { sol: 0, lamports: 0, error: null };
+        }
+      } catch (error) {
+        if (attempt === retries) {
+          return { 
+            sol: 0, 
+            lamports: 0, 
+            error: `Failed after ${retries} attempts: ${error.message}` 
+          };
+        }
+        
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+      }
     }
   }
 
@@ -331,65 +360,7 @@ export class NFTMinter {
     return this.mintedNFTs;
   }
 
-  async promptForWebDashboard() {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
 
-    console.log('\n🌐 Web Dashboard Integration');
-    console.log('You can connect a browser wallet via the web dashboard for easier management.');
-    console.log('\n📋 To use web dashboard:');
-    console.log('   1. Run: npm run server (in another terminal)');
-    console.log('   2. Run: npm run web (in another terminal)');
-    console.log('   3. Open: http://localhost:3000');
-    console.log('   4. Connect your wallet (Phantom, Solflare, etc.)');
-
-    return new Promise((resolve) => {
-      rl.question('\n🤔 Wait for web wallet connection? (y/N): ', (answer) => {
-        rl.close();
-        resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
-      });
-    });
-  }
-
-  async waitForWebWallet() {
-    console.log('\n⏳ Waiting for web wallet connection...');
-    console.log('   💡 Connect a wallet at: http://localhost:3000');
-    console.log('   ⌨️  Press Ctrl+C to skip and use file wallet');
-
-    const maxAttempts = 60; // 60 seconds timeout
-    let attempts = 0;
-
-    while (attempts < maxAttempts) {
-      try {
-        const response = await axios.get(`${this.apiUrl}/api/wallet/status`, { timeout: 1000 });
-        
-        if (response.data.connected) {
-          const wallet = response.data.wallet;
-          console.log(`\n✅ Web wallet connected: ${wallet.walletName}`);
-          console.log(`   Address: ${wallet.publicKey}`);
-          return wallet;
-        }
-      } catch (error) {
-        // Server not available or no wallet connected yet
-        if (attempts === 0) {
-          console.log('   ⚠️  Web server not available. Make sure to run: npm run server');
-        }
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      attempts++;
-      
-      // Show progress every 10 seconds
-      if (attempts % 10 === 0) {
-        console.log(`   ⏱️  Still waiting... (${60 - attempts}s remaining)`);
-      }
-    }
-
-    console.log('\n⏰ Timeout waiting for web wallet connection');
-    return null;
-  }
 
   async promptToContinue() {
     const rl = readline.createInterface({
@@ -451,11 +422,9 @@ export class NFTMinter {
       })
       .on('error', (error) => {
         console.error('❌ Watcher error:', error);
-        this.emitEvent('error', { message: 'Watcher error', error: error.message });
       });
 
     console.log('🎯 Watcher started successfully');
-    this.emitEvent('watcherStarted', { message: 'Folder watcher started' });
   }
 
   stopWatching() {
@@ -463,15 +432,9 @@ export class NFTMinter {
       this.watcher.close();
       this.watcher = null;
       console.log('🛑 Folder watcher stopped');
-      this.emitEvent('watcherStopped', { message: 'Folder watcher stopped' });
     }
   }
 
-  emitEvent(event, data) {
-    if (this.eventEmitter) {
-      this.eventEmitter.emit(event, data);
-    }
-  }
 
   async handleNewFolder(folderPath) {
     const folderName = path.basename(folderPath);
@@ -499,7 +462,6 @@ export class NFTMinter {
     }
 
     console.log(`📁 New folder detected: ${folderName}`);
-    this.emitEvent('folderDetected', { folder: folderName });
     
     setTimeout(() => {
       this.processFolder(folderPath);
@@ -532,7 +494,6 @@ export class NFTMinter {
     }
 
     console.log(`🔄 Processing folder: ${folderName}`);
-    this.emitEvent('processingStarted', { folder: folderName });
 
     try {
       const { mediaFile, metadata } = await this.loadFolderContents(folderPath);
@@ -540,16 +501,13 @@ export class NFTMinter {
       if (!this.validateMetadata(metadata)) {
         console.error(`❌ Invalid metadata in folder: ${folderName}`);
         this.stats.errors++;
-        this.emitEvent('error', { folder: folderName, message: 'Invalid metadata' });
         return;
       }
 
       console.log(`📤 Uploading media and metadata for: ${metadata.name}`);
-      this.emitEvent('uploading', { folder: folderName, nftName: metadata.name });
       const { mediaUri, metadataUri } = await this.uploadToArweave(mediaFile, metadata);
       
       console.log(`🪙 Minting NFT: ${metadata.name}`);
-      this.emitEvent('minting', { folder: folderName, nftName: metadata.name });
       const { signature, mint } = await this.mintNFT(metadataUri, metadata);
       
       const nftData = {
@@ -569,8 +527,6 @@ export class NFTMinter {
       console.log(`🔗 Transaction: ${nftData.explorerUrl}`);
       console.log(`🎨 NFT: ${nftData.mintUrl}`);
       
-      this.emitEvent('nftMinted', nftData);
-      
       await this.markFolderProcessed(folderPath);
       await this.moveFolderToProcessed(folderPath);
       
@@ -580,99 +536,10 @@ export class NFTMinter {
     } catch (error) {
       console.error(`❌ Error processing folder ${folderName}:`, error.message);
       this.stats.errors++;
-      this.emitEvent('error', { folder: folderName, message: error.message });
     }
   }
 
-  // Method for manual NFT minting via API
-  async mintNFTFromUpload(mediaFile, metadata) {
-    try {
-      if (!this.validateMetadata(metadata)) {
-        throw new Error('Invalid metadata');
-      }
 
-      console.log(`📤 Uploading media and metadata for: ${metadata.name}`);
-      this.emitEvent('uploading', { nftName: metadata.name, source: 'api' });
-      
-      const { mediaUri, metadataUri } = await this.uploadFileToArweave(mediaFile, metadata);
-      
-      console.log(`🪙 Minting NFT: ${metadata.name}`);
-      this.emitEvent('minting', { nftName: metadata.name, source: 'api' });
-      
-      const { signature, mint } = await this.mintNFT(metadataUri, metadata);
-      
-      const nftData = {
-        name: metadata.name,
-        mint: mint.toString(),
-        signature: signature,
-        explorerUrl: `https://explorer.solana.com/tx/${signature}`,
-        mintUrl: `https://explorer.solana.com/address/${mint}`,
-        timestamp: new Date(),
-        source: 'api'
-      };
-      
-      this.mintedNFTs.push(nftData);
-      this.stats.totalMinted++;
-      
-      console.log(`✅ Successfully minted NFT via API: ${metadata.name}`);
-      this.emitEvent('nftMinted', nftData);
-      
-      // Clean up uploaded file
-      await fs.unlink(mediaFile.path);
-      
-      return { signature, mint: mint.toString() };
-      
-    } catch (error) {
-      this.stats.errors++;
-      this.emitEvent('error', { message: error.message, source: 'api' });
-      throw error;
-    }
-  }
-
-  async uploadFileToArweave(mediaFile, metadata) {
-    const mediaBuffer = await fs.readFile(mediaFile.path);
-    const contentType = mediaFile.mimetype || mime.lookup(mediaFile.filename) || 'application/octet-stream';
-    
-    console.log(`📤 Uploading API media file: ${mediaFile.filename || mediaFile.originalname} (${(mediaBuffer.length / 1024).toFixed(1)}KB)`);
-    
-    try {
-      const [mediaUri] = await this.umi.uploader.upload([{
-        buffer: mediaBuffer,
-        fileName: mediaFile.filename || mediaFile.originalname,
-        contentType,
-        tags: [
-          { name: 'Content-Type', value: contentType },
-          { name: 'App-Name', value: 'WTS-NFT-Minter-API' }
-        ]
-      }]);
-      
-      console.log(`✅ API media uploaded successfully: ${mediaUri}`);
-      
-      const metadataWithImage = {
-        ...metadata,
-        image: mediaUri
-      };
-      
-      const metadataBuffer = Buffer.from(JSON.stringify(metadataWithImage, null, 2));
-      const [metadataUri] = await this.umi.uploader.upload([{
-        buffer: metadataBuffer,
-        fileName: 'metadata.json',
-        contentType: 'application/json',
-        tags: [
-          { name: 'Content-Type', value: 'application/json' },
-          { name: 'App-Name', value: 'WTS-NFT-Minter-API' }
-        ]
-      }]);
-      
-      console.log(`✅ API metadata uploaded successfully: ${metadataUri}`);
-      
-      return { mediaUri, metadataUri };
-      
-    } catch (uploadError) {
-      console.error(`❌ API upload failed: ${uploadError.message}`);
-      throw new Error(`Arweave API upload failed: ${uploadError.message}`);
-    }
-  }
 
   async loadFolderContents(folderPath) {
     const files = await fs.readdir(folderPath);
