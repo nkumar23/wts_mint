@@ -1,0 +1,36 @@
+{
+  "name": "wts-mint-nft",
+  "version": "1.0.0",
+  "description": "CLI tool for watching directories and minting NFTs on Solana",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "NODE_NO_WARNINGS=1 node src/index.js",
+    "dev": "NODE_NO_WARNINGS=1 node --watch src/index.js",
+    "wallet-demo": "node examples/wallet-demo.js",
+    "setup-helius": "node setup-helius.js",
+    "check-balance": "node -e \"import('./src/nft-minter.js').then(async ({NFTMinter}) => { const m = new NFTMinter({rpcUrl: process.env.HELIUS_API_KEY ? 'https://mainnet.helius-rpc.com/?api-key=' + process.env.HELIUS_API_KEY : 'https://api.mainnet-beta.solana.com', keypairPath: './wallet.json'}); await m.initializeForAPI(); const info = await m.getWalletInfo(); console.log('Balance:', info.balance, 'SOL'); })\"",
+    "check-arweave": "node -e \"const url = process.argv[1]; if(!url) { console.log('Usage: npm run check-arweave <arweave-url>'); process.exit(1); } fetch(url).then(r => console.log('Status:', r.status, r.statusText, '| Type:', r.headers.get('content-type'))).catch(e => console.log('Error:', e.message))\" --"
+  },
+  "keywords": [
+    "solana",
+    "nft",
+    "metaplex",
+    "umi",
+    "bundlr",
+    "arweave",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
+    "@metaplex-foundation/umi": "^0.9.2",
+    "@metaplex-foundation/umi-bundle-defaults": "^0.9.2",
+    "@metaplex-foundation/umi-uploader-bundlr": "^0.9.2",
+    "bs58": "^5.0.0",
+    "chokidar": "^3.6.0",
+    "dotenv": "^17.2.1",
+    "mime-types": "^2.1.35"
+  }
+}
