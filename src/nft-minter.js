@@ -588,59 +588,147 @@ export class NFTMinter {
     
     console.log(`📤 Uploading media file: ${mediaFile.name} (${(mediaBuffer.length / 1024).toFixed(1)}KB)`);
     
-    try {
-      const [mediaUri] = await this.umi.uploader.upload([{
+    // Upload media with retry logic
+    const mediaUri = await this.uploadWithRetry(async () => {
+      const [uri] = await this.umi.uploader.upload([{
         buffer: mediaBuffer,
         fileName: mediaFile.name,
         contentType: mediaFile.type,
         tags: [
           { name: 'Content-Type', value: mediaFile.type },
-          { name: 'App-Name', value: 'WTS-NFT-Minter' }
+          { name: 'App-Name', value: 'WTS-NFT-Minter' },
+          { name: 'File-Size', value: mediaBuffer.length.toString() }
         ]
       }]);
-      
-      console.log(`✅ Media uploaded successfully: ${mediaUri}`);
-      
-      // Wait a moment for Bundlr to process
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Verify upload by attempting to fetch
-      try {
-        const response = await fetch(mediaUri, { method: 'HEAD' });
-        if (!response.ok) {
-          console.log(`⚠️  Media file not immediately accessible (${response.status}), but this is normal for new uploads`);
-        } else {
-          console.log(`✅ Media file verified accessible`);
-        }
-      } catch (verifyError) {
-        console.log(`⚠️  Could not verify media upload immediately (normal for new uploads)`);
-      }
-      
-      console.log(`📤 Uploading metadata`);
-      const metadataWithImage = {
-        ...metadata,
-        image: mediaUri
-      };
-      
-      const metadataBuffer = Buffer.from(JSON.stringify(metadataWithImage, null, 2));
-      const [metadataUri] = await this.umi.uploader.upload([{
+      return uri;
+    }, `media file ${mediaFile.name}`);
+    
+    // Verify media upload with content integrity check
+    await this.verifyArweaveUpload(mediaUri, mediaBuffer, mediaFile.type);
+    console.log(`✅ Media upload verified: ${mediaUri}`);
+    
+    // Upload metadata with retry logic
+    console.log(`📤 Uploading metadata`);
+    const metadataWithImage = {
+      ...metadata,
+      image: mediaUri
+    };
+    
+    const metadataBuffer = Buffer.from(JSON.stringify(metadataWithImage, null, 2));
+    const metadataUri = await this.uploadWithRetry(async () => {
+      const [uri] = await this.umi.uploader.upload([{
         buffer: metadataBuffer,
         fileName: 'metadata.json',
         contentType: 'application/json',
         tags: [
           { name: 'Content-Type', value: 'application/json' },
-          { name: 'App-Name', value: 'WTS-NFT-Minter' }
+          { name: 'App-Name', value: 'WTS-NFT-Minter' },
+          { name: 'NFT-Name', value: metadata.name }
         ]
       }]);
-      
-      console.log(`✅ Metadata uploaded successfully: ${metadataUri}`);
-      
-      return { mediaUri, metadataUri };
-      
-    } catch (uploadError) {
-      console.error(`❌ Upload failed: ${uploadError.message}`);
-      throw new Error(`Arweave upload failed: ${uploadError.message}`);
+      return uri;
+    }, 'metadata');
+    
+    // Verify metadata upload
+    await this.verifyArweaveUpload(metadataUri, metadataBuffer, 'application/json');
+    console.log(`✅ Metadata upload verified: ${metadataUri}`);
+    
+    return { mediaUri, metadataUri };
+  }
+
+  async uploadWithRetry(uploadFn, description, maxRetries = 3) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`   Uploading ${description} (attempt ${attempt}/${maxRetries})`);
+        const result = await uploadFn();
+        console.log(`✅ ${description} uploaded: ${result}`);
+        return result;
+      } catch (error) {
+        lastError = error;
+        console.log(`❌ Upload attempt ${attempt} failed: ${error.message}`);
+        
+        // Check if it's a specific Bundlr/Arweave error
+        if (error.message.includes('insufficient funds')) {
+          throw new Error(`Insufficient funds for upload. Please fund your wallet with AR tokens.`);
+        }
+        
+        if (attempt < maxRetries) {
+          const delayMs = Math.min(5000 * attempt, 30000); // Exponential backoff, max 30s
+          console.log(`   Waiting ${delayMs/1000}s before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
     }
+    
+    throw new Error(`Failed to upload ${description} after ${maxRetries} attempts. Last error: ${lastError.message}`);
+  }
+
+  async verifyArweaveUpload(uri, expectedBuffer, expectedContentType, maxWaitMinutes = 15) {
+    const startTime = Date.now();
+    const maxWaitMs = maxWaitMinutes * 60 * 1000;
+    const checkIntervals = [3000, 5000, 10000, 30000, 60000]; // Progressive intervals
+    let intervalIndex = 0;
+    
+    console.log(`🔍 Verifying upload availability: ${uri}`);
+    
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const response = await fetch(uri, { 
+          method: 'GET',
+          timeout: 10000 // 10 second timeout
+        });
+        
+        if (response.ok) {
+          // Verify content type
+          const actualContentType = response.headers.get('content-type');
+          if (actualContentType && !actualContentType.includes(expectedContentType.split('/')[0])) {
+            throw new Error(`Content type mismatch. Expected: ${expectedContentType}, Got: ${actualContentType}`);
+          }
+          
+          // Verify content integrity for smaller files (< 10MB)
+          if (expectedBuffer.length < 10 * 1024 * 1024) {
+            const actualBuffer = Buffer.from(await response.arrayBuffer());
+            if (!actualBuffer.equals(expectedBuffer)) {
+              throw new Error(`Content integrity check failed. Expected ${expectedBuffer.length} bytes, got ${actualBuffer.length} bytes`);
+            }
+            console.log(`   Content integrity verified (${actualBuffer.length} bytes)`);
+          } else {
+            // For larger files, just verify size
+            const contentLength = response.headers.get('content-length');
+            if (contentLength && parseInt(contentLength) !== expectedBuffer.length) {
+              throw new Error(`File size mismatch. Expected: ${expectedBuffer.length}, Got: ${contentLength}`);
+            }
+            console.log(`   File size verified (${expectedBuffer.length} bytes)`);
+          }
+          
+          return true; // Upload verified successfully
+        } else if (response.status === 404) {
+          // Not found yet, continue waiting
+          console.log(`   Upload not yet available (${response.status}), continuing to wait...`);
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      } catch (error) {
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+          console.log(`   Network error accessing upload, continuing to wait...`);
+        } else {
+          console.log(`   Verification error: ${error.message}`);
+        }
+      }
+      
+      // Wait before next check with progressive intervals
+      const waitTime = checkIntervals[Math.min(intervalIndex, checkIntervals.length - 1)];
+      intervalIndex++;
+      
+      const elapsedMinutes = ((Date.now() - startTime) / 60000).toFixed(1);
+      console.log(`   Waiting ${waitTime/1000}s before next check (${elapsedMinutes}/${maxWaitMinutes} minutes elapsed)...`);
+      
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    throw new Error(`Upload verification timeout after ${maxWaitMinutes} minutes. The upload may still succeed later.`);
   }
 
   async mintNFT(metadataUri, metadata) {
