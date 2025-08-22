@@ -6,23 +6,25 @@ A Node.js CLI tool that watches a designated "inbox" directory for new subfolder
 
 - 📁 **Directory Watching**: Monitors inbox folder for new subfolders
 - 🔒 **Resilient Processing**: Only processes folders once, waits for file stability
-- ☁️ **Decentralized Storage**: Uploads to Arweave via Bundlr
+- ☁️ **Decentralized Storage**: Uploads to IPFS via NFT.Storage
 - 🪙 **NFT Minting**: Creates Token Metadata NFTs on Solana using Metaplex Umi
 - 🔗 **Explorer URLs**: Prints transaction and NFT URLs for easy verification
 - ✅ **Validation**: Ensures metadata has required fields
 
 ## Setup
 
-1. Install dependencies:
-```bash
-npm install
-```
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-2. Configure environment (optional):
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
+2. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env with:
+   # - Your Helius API key for better RPC performance (optional)
+   # - Your NFT.Storage token (required) - get one at https://nft.storage
+   ```
 
 3. Wallet Management:
    - **First run**: Interactive prompt to create new or use existing wallet
